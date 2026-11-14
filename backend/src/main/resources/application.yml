@@ -1,14 +1,6 @@
 server:
   port: 8080
   forward-headers-strategy: native
-  servlet:
-    session:
-      timeout: 15m            # idle timeout; the SPA calls /auth/refresh while the user is active
-      cookie:
-        name: IBSESSION
-        http-only: true
-        secure: ${APP_COOKIE_SECURE:false}
-        same-site: lax
   error:
     include-message: never
     include-stacktrace: never
@@ -42,6 +34,11 @@ fineract:
 app:
   max-failed-logins: 5
   lockout-minutes: 15
+  jwt:
+    secret: ${APP_JWT_SECRET}
+    lifetime: 15m
+  cors:
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:}
   bootstrap-admin-username: ${APP_BOOTSTRAP_ADMIN_USERNAME:admin}
   bootstrap-admin-password: ${APP_BOOTSTRAP_ADMIN_PASSWORD:}
   seed-demo-users: ${APP_SEED_DEMO_USERS:false}

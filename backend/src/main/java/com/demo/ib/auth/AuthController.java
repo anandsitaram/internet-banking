@@ -3,8 +3,6 @@ package com.demo.ib.auth;
 import com.demo.ib.audit.AuditService;
 import com.demo.ib.common.ApiException;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -21,7 +19,7 @@ public class AuthController {
     public record ForgotPasswordRequest(@NotBlank @Size(max = 254) String usernameOrEmail) {}
     public record ChangePasswordRequest(@NotBlank @Size(max = 128) String currentPassword,
                                         @NotBlank @Size(max = 128) String newPassword) {}
-    public record SessionInfo(AuthUser user, int idleTimeoutSeconds) {}
+    public record SessionInfo(AuthUser user, String accessToken, int expiresInSeconds) {}
 
     private final AuthService auth;
     private final AuditService audit;
@@ -32,10 +30,9 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public SessionInfo login(@Valid @RequestBody LoginRequest body, HttpServletRequest request,
-                             HttpServletResponse response) {
-        AuthUser user = auth.login(body.username(), body.password(), request, response);
-        return new SessionInfo(user, idleSeconds(request));
+    public SessionInfo login(@Valid @RequestBody LoginRequest body, HttpServletRequest request) {
+        AuthUser user = auth.login(body.username(), body.password(), request);
+        return session(user);
     }
 
     @PostMapping("/logout")
@@ -45,15 +42,14 @@ public class AuthController {
     }
 
     @PostMapping("/refresh")
-    public SessionInfo refresh(@AuthenticationPrincipal AuthUser user, HttpServletRequest request,
-                               HttpServletResponse response) {
-        AuthUser fresh = auth.refresh(user, request, response);
-        return new SessionInfo(fresh, idleSeconds(request));
+    public SessionInfo refresh(@AuthenticationPrincipal AuthUser user, HttpServletRequest request) {
+        AuthUser fresh = auth.refresh(user, request);
+        return session(fresh);
     }
 
     @GetMapping("/me")
-    public SessionInfo me(@AuthenticationPrincipal AuthUser user, HttpServletRequest request) {
-        return new SessionInfo(user, idleSeconds(request));
+    public SessionInfo me(@AuthenticationPrincipal AuthUser user) {
+        return session(user);
     }
 
     /**
@@ -77,8 +73,7 @@ public class AuthController {
         return ResponseEntity.noContent().build();
     }
 
-    private static int idleSeconds(HttpServletRequest request) {
-        HttpSession s = request.getSession(false);
-        return s == null ? 0 : s.getMaxInactiveInterval();
+    private SessionInfo session(AuthUser user) {
+        return new SessionInfo(user, auth.issueAccessToken(user), auth.tokenLifetimeSeconds());
     }
 }

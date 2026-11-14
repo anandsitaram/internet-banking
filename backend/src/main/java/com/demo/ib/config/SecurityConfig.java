@@ -1,5 +1,8 @@
 package com.demo.ib.config;
 
+import java.util.Arrays;
+import java.util.List;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -9,16 +12,14 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
-import org.springframework.security.web.context.SecurityContextRepository;
-import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
-import org.springframework.security.web.csrf.CsrfFilter;
-import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 /**
- * Server-side session + CSRF (double-submit cookie) for a same-origin SPA.
- * The browser never holds credentials for Fineract and never receives a bearer token.
+ * Stateless bearer-token authentication for the SPA.
  * Authorisation is enforced here (URL rules by role) and on controllers (@PreAuthorize by permission).
  */
 @Configuration
@@ -31,33 +32,44 @@ public class SecurityConfig {
     }
 
     @Bean
-    SecurityContextRepository securityContextRepository() {
-        return new HttpSessionSecurityContextRepository();
+    CorsConfigurationSource corsConfigurationSource(
+            @Value("${app.cors.allowed-origins:}") String allowedOrigins) {
+        CorsConfiguration cors = new CorsConfiguration();
+        cors.setAllowedOrigins(Arrays.stream(allowedOrigins.split(","))
+            .map(String::trim)
+            .filter(origin -> !origin.isEmpty())
+            .toList());
+        cors.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        cors.setAllowedHeaders(List.of("Authorization", "Content-Type", "Idempotency-Key"));
+        cors.setAllowCredentials(false);
+        cors.setMaxAge(3600L);
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/api/**", cors);
+        return source;
     }
 
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http, JsonSecurityHandlers handlers,
-                                    SecurityContextRepository contextRepository) throws Exception {
-        CsrfTokenRequestAttributeHandler csrfHandler = new CsrfTokenRequestAttributeHandler();
-
-        CookieCsrfTokenRepository csrfRepo = CookieCsrfTokenRepository.withHttpOnlyFalse();
-        csrfRepo.setCookiePath("/");
-
+                                    JwtAuthConverter jwtAuthConverter) throws Exception {
         http
-            .csrf(c -> c.csrfTokenRepository(csrfRepo).csrfTokenRequestHandler(csrfHandler))
-            .addFilterAfter(new CsrfCookieFilter(), CsrfFilter.class)
-            .cors(AbstractHttpConfigurer::disable)            // same-origin only (nginx serves SPA and /api)
+            .csrf(AbstractHttpConfigurer::disable)
+            .cors(Customizer.withDefaults())
             .formLogin(AbstractHttpConfigurer::disable)
             .httpBasic(AbstractHttpConfigurer::disable)
             .logout(AbstractHttpConfigurer::disable)          // handled (and audited) by AuthController
             .requestCache(rc -> rc.disable())
-            .securityContext(sc -> sc.securityContextRepository(contextRepository))
+            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .headers(h -> h
                 .contentTypeOptions(Customizer.withDefaults())
                 .frameOptions(f -> f.deny())
                 .referrerPolicy(r -> r.policy(
                     org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER)))
             .exceptionHandling(e -> e.authenticationEntryPoint(handlers).accessDeniedHandler(handlers))
+            .oauth2ResourceServer(oauth -> oauth
+                .authenticationEntryPoint(handlers)
+                .accessDeniedHandler(handlers)
+                .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthConverter)))
             .authorizeHttpRequests(a -> a
                 .requestMatchers("/error").permitAll()
                 .requestMatchers("/api/v1/health", "/actuator/health", "/actuator/health/**").permitAll()

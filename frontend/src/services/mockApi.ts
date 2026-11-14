@@ -50,12 +50,13 @@ export const mockApi = {
             ? ['CUSTOMER_REGISTER', 'CUSTOMER_READ', 'ACCOUNT_OPEN', 'APPROVAL_DECIDE']
             : ['ACCOUNT_VIEW_OWN', 'TRANSFER_CREATE', 'BENEFICIARY_MANAGE', 'STATEMENT_DOWNLOAD'],
         },
-        idleTimeoutSeconds: 900,
+        accessToken: '',
+        expiresInSeconds: 900,
       }
     },
     me: async (currentUser: any): Promise<SessionInfo> => {
       await delay(50)
-      return { user: currentUser, idleTimeoutSeconds: 900 }
+      return { user: currentUser, accessToken: '', expiresInSeconds: 900 }
     },
   },
 

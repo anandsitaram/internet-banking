@@ -13,7 +13,7 @@ export interface AuthUser {
   roles: RoleName[]
   permissions: string[]
 }
-export interface SessionInfo { user: AuthUser; idleTimeoutSeconds: number }
+export interface SessionInfo { user: AuthUser; accessToken: string; expiresInSeconds: number }
 
 export interface PageResponse<T> { items: T[]; page: number; size: number; total: number }
 

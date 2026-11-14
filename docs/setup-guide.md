@@ -18,14 +18,14 @@
    * [Database Schema & Automatic Flyway Migrations](#database-schema--automatic-flyway-migrations)
 6. [Frontend Setup Guide (React + TypeScript + Material UI)](#6-frontend-setup-guide-react--typescript--material-ui)
 7. [Deploying Frontend to Vercel](#7-deploying-frontend-to-vercel)
-   * [Option 1: 1-Click CLI Deployment](#option-1-1-click-cli-deployment)
+   * [Option 1: CLI Deployment](#option-1-cli-deployment)
    * [Option 2: Vercel Web Dashboard (Git Integration)](#option-2-vercel-web-dashboard-git-integration)
    * [Connecting Vercel Frontend to Cloud Backend](#connecting-vercel-frontend-to-cloud-backend)
 8. [Banking Security & Business Rules](#8-banking-security--business-rules)
    * [Maker-Checker Dual Authorization](#1-maker-checker-dual-authorization)
    * [Idempotency Key Safeguard](#2-idempotency-key-safeguard)
    * [Database Segregation & Ledger Invariant](#3-database-segregation--ledger-invariant)
-   * [Session & CSRF Protection](#4-session--csrf-protection)
+   * [JWT Bearer Token Authentication](#4-jwt-bearer-token-authentication)
 9. [REST API Reference & cURL Testing](#9-rest-api-reference--curl-testing)
 10. [Troubleshooting & FAQ](#10-troubleshooting--faq)
 
@@ -47,7 +47,7 @@ flowchart TD
     end
 
     subgraph ApplicationServer ["Application Backend (BFF)"]
-        BFF["Spring Boot BFF (:8080)<br/>Session, RBAC, Limits, Workflows"]
+        BFF["Spring Boot BFF (:8080)<br/>JWT, RBAC, Limits, Workflows"]
         SimLedger["Resilient Core Banking Engine<br/>Double-Entry Simulation Fallback"]
     end
 
@@ -57,10 +57,10 @@ flowchart TD
         FineractDB[("Fineract PostgreSQL<br/>tenants & core accounting")]
     end
 
-    Browser <-->|HTTPS / JSON / Session Cookie| VercelCDN
+    Browser <-->|HTTPS / JSON / Bearer Token| VercelCDN
     Browser <-->|HTTP / Reverse Proxy| Nginx
     Nginx -->|/api/v1 Proxy| BFF
-    VercelCDN -.->|VITE_API_URL Proxy| BFF
+    VercelCDN -->|HTTPS API + CORS| BFF
     BFF <-->|JDBC / Flyway| AppDB
     BFF <-->|REST Basic Auth| Fineract
     BFF -.->|Fallback if Fineract Offline| SimLedger
@@ -99,7 +99,7 @@ When demo data seeding is enabled (`APP_SEED_DEMO_USERS=true`), the following te
 | **Bank User (Staff)** | `bank.user1` | `DemoPass@2026` | `/staff` | Onboarding, demo accounts, maker-checker approvals |
 | **Administrator** | `admin` | `CHANGE-ME-Admin#2026` | `/admin` | User CRUD, role matrix, transaction limits, audit, reports |
 
-> **Interactive Helper**: The web portal includes an instant **1-Click Demo Login** panel on `/login` and a **Quick Role Switcher** dropdown in the top header, making evaluation effortless across all three roles.
+> The sign-in page uses username and password credentials; demo users can be enabled in the backend configuration.
 
 ---
 
@@ -114,7 +114,7 @@ When demo data seeding is enabled (`APP_SEED_DEMO_USERS=true`), the following te
 
 ## 5. Backend Setup Guide (Spring Boot BFF + Fineract + PostgreSQL)
 
-The backend is built with Spring Boot 3.4 using `spring-boot-starter-jdbc`, Flyway for versioned database migrations, and Spring Security with session cookies and CSRF double-submit protection.
+The backend is built with Spring Boot 3.4 using `spring-boot-starter-jdbc`, Flyway for versioned database migrations, and Spring Security with stateless JWT bearer authentication.
 
 ### Method A: Full Docker Compose Backend (Recommended)
 
@@ -148,7 +148,8 @@ FINERACT_PASSWORD=password
 
 # Application Settings
 SPRING_PROFILES_ACTIVE=dev
-APP_COOKIE_SECURE=false
+APP_JWT_SECRET=CHANGE-ME-Use-A-Unique-Secret-At-Least-32-Bytes
+APP_CORS_ALLOWED_ORIGINS=https://your-project.vercel.app
 APP_BOOTSTRAP_ADMIN_USERNAME=admin
 APP_BOOTSTRAP_ADMIN_PASSWORD=CHANGE-ME-Admin#2026
 APP_SEED_DEMO_USERS=true
@@ -209,6 +210,7 @@ Set the environment variables in your terminal:
 $env:APP_DB_URL="jdbc:postgresql://localhost:5433/ib_app"
 $env:APP_DB_USER="ib_app"
 $env:APP_DB_PASSWORD="change_me_app"
+$env:APP_JWT_SECRET="CHANGE-ME-Use-A-Unique-Secret-At-Least-32-Bytes"
 $env:APP_BOOTSTRAP_ADMIN_PASSWORD="CHANGE-ME-Admin#2026"
 $env:APP_SEED_DEMO_USERS="true"
 $env:DEMO_USER_PASSWORD="DemoPass@2026"
@@ -220,6 +222,7 @@ $env:FINERACT_BASE_URL="http://localhost:8443"
 export APP_DB_URL="jdbc:postgresql://localhost:5433/ib_app"
 export APP_DB_USER="ib_app"
 export APP_DB_PASSWORD="change_me_app"
+export APP_JWT_SECRET="CHANGE-ME-Use-A-Unique-Secret-At-Least-32-Bytes"
 export APP_BOOTSTRAP_ADMIN_PASSWORD="CHANGE-ME-Admin#2026"
 export APP_SEED_DEMO_USERS="true"
 export DEMO_USER_PASSWORD="DemoPass@2026"
@@ -267,10 +270,12 @@ To connect your Vercel frontend to a live cloud backend:
      * `APP_BOOTSTRAP_ADMIN_PASSWORD`: `<your-admin-password>`
      * `APP_SEED_DEMO_USERS`: `true`
      * `DEMO_USER_PASSWORD`: `<demo-password>`
-     * `APP_COOKIE_SECURE`: `true` (since cloud uses HTTPS)
+     * `APP_JWT_SECRET`: a unique signing secret of at least 32 bytes
+     * `APP_CORS_ALLOWED_ORIGINS`: exact Vercel site origin, e.g. `https://your-project.vercel.app`
 3. **Copy the Public Backend URL**:
    * e.g., `https://ib-backend.up.railway.app`
-   * Configure this in your Vercel project as `VITE_API_URL=https://ib-backend.up.railway.app/api/v1`.
+   * Set `VITE_API_URL=https://ib-backend.up.railway.app/api/v1` in your Vercel project.
+   * Origins must be exact (scheme + host, no path); add the custom domain too if used. Multiple origins are comma-separated; do not use `*`.
 
 ---
 
@@ -281,11 +286,12 @@ To connect your Vercel frontend to a live cloud backend:
 | `APP_DB_URL` | `jdbc:postgresql://app-db:5432/ib_app` | Yes | JDBC URL to application database |
 | `APP_DB_USER` | `ib_app` | Yes | PostgreSQL username |
 | `APP_DB_PASSWORD` | — | Yes | PostgreSQL password |
+| `APP_CORS_ALLOWED_ORIGINS` | empty | No | Comma-separated exact browser origins allowed to call the API |
 | `FINERACT_BASE_URL` | `http://fineract:8443` | No | Base URL of Apache Fineract core |
 | `FINERACT_TENANT_ID` | `default` | No | Fineract tenant identifier |
 | `FINERACT_USERNAME` | `mifos` | No | Core banking service username |
 | `FINERACT_PASSWORD` | `password` | No | Core banking service password |
-| `APP_COOKIE_SECURE` | `false` | No | Set `true` in production when serving via HTTPS |
+| `APP_JWT_SECRET` | — | Yes | Unique secret of at least 32 UTF-8 bytes used to sign access tokens |
 | `APP_BOOTSTRAP_ADMIN_USERNAME` | `admin` | No | Initial administrator username |
 | `APP_BOOTSTRAP_ADMIN_PASSWORD` | — | Yes (first boot) | Admin password (must satisfy policy: 12+ chars, mixed case, digit, symbol) |
 | `APP_SEED_DEMO_USERS` | `true` | No | Automatically seeds `customer.alex` and `bank.user1` |
@@ -503,40 +509,38 @@ Builds optimized production assets into `frontend/dist/` with code-split bundles
 
 ## 7. Deploying Frontend to Vercel
 
-The frontend includes [`frontend/vercel.json`](file:///D:/Workspace/internet-banking-mvp-phase2/internet-banking-mvp/frontend/vercel.json) and root [`vercel.json`](file:///D:/Workspace/internet-banking-mvp-phase2/internet-banking-mvp/vercel.json) configured for SPA client-side routing and security headers.
+Vercel hosts the static React SPA. The Spring Boot API, PostgreSQL, and Fineract must run on a separate backend host. The Vercel frontend calls the API directly with JWT bearer tokens; configure the backend's exact allowed origin as described above.
 
-### Option 1: 1-Click CLI Deployment
+### Option 1: CLI Deployment
 
-1. From the `frontend` folder:
+1. Deploy the backend and databases first. On the backend set `APP_JWT_SECRET` and `APP_CORS_ALLOWED_ORIGINS` to the exact deployed Vercel origin.
+2. In Vercel, import the repository and set **Root Directory** to `frontend`.
+3. Add `VITE_API_URL=https://<your-backend-host>/api/v1` in **Project Settings → Environment Variables**. This switches the frontend from mock demo mode to the real API.
+4. Deploy. The frontend Vercel configuration builds with `npm run build`, serves `dist`, and rewrites SPA routes to `index.html`.
+5. CLI deployment is also available from the `frontend` folder:
 ```bash
 cd internet-banking-mvp/frontend
 npx vercel
 ```
-2. Follow the prompt instructions:
-   * **Set up and deploy?**: `y`
-   * **Scope**: Choose your personal or team account
-   * **Link to existing project?**: `N`
-   * **Project name**: `openbank-internet-banking`
-   * **Directory**: `./`
-   * **Override settings?**: `N`
-3. Deploy to production:
+6. Deploy to production:
 ```bash
 npx vercel --prod
 ```
+If using a custom domain, add that exact origin to `APP_CORS_ALLOWED_ORIGINS` and restart the backend. Vercel preview URLs must also be explicitly listed if previews should access the API.
 
 ### Option 2: Vercel Web Dashboard (Git Integration)
 
 1. Push your repository to GitHub / GitLab / Bitbucket.
 2. Open [https://vercel.com/new](https://vercel.com/new).
 3. Import your repository.
-4. Set **Root Directory** to `frontend` (or leave root).
+4. Set **Root Directory** to `frontend`.
 5. Build settings are automatically read from `vercel.json`:
    * **Framework Preset**: Vite
    * **Build Command**: `npm run build`
    * **Output Directory**: `dist`
 6. Click **Deploy**.
 
-> **Sandbox Mode on Vercel**: Anyone who visits your Vercel deployment URL can immediately log in as `customer.alex`, `bank.user1`, or `admin` using the 1-click login chips and test the complete banking workflow!
+When `VITE_API_URL` is unset, the site may use its local mock demo mode. Set it in Vercel to connect to the live backend; never put backend secrets in `VITE_*` variables.
 
 ---
 
@@ -556,9 +560,12 @@ npx vercel --prod
 * Financial account balances live only in Apache Fineract's double-entry accounting ledger.
 * The application database stores only relational identifiers (`fineract_client_id`, `fineract_savings_account_id`).
 
-### 4. Session & CSRF Protection
-* Session authentication uses a secure `HttpOnly` cookie (`IBSESSION`).
-* Double-submit CSRF cookie protection (`XSRF-TOKEN` / `X-XSRF-TOKEN`) is enforced on all state-mutating requests (`POST`, `PUT`, `DELETE`).
+### 4. JWT Bearer Token Authentication
+* `/auth/login` returns an HS256 signed JWT with a 15-minute expiry.
+* Send it on protected requests as `Authorization: Bearer <accessToken>`.
+* `/auth/refresh` returns a replacement token; the SPA refreshes only while active and stores it in tab-scoped `sessionStorage`.
+* Generate a strong signing secret with `openssl rand -base64 32`; set the same value as `APP_JWT_SECRET` in every backend instance.
+* The backend is stateless and reloads account status and permissions from the database on every authenticated request.
 
 ---
 
@@ -568,36 +575,36 @@ All application endpoints are versioned under `/api/v1`.
 
 ### 5.1 Authentication APIs
 ```bash
-# Login (Captures session cookie)
-curl -X POST http://localhost:3000/api/v1/auth/login \
+# Login and capture the bearer access token
+TOKEN=$(curl -s -X POST http://localhost:3000/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"customer.alex","password":"DemoPass@2026"}' \
-  -c cookies.txt
+  | sed -n 's/.*"accessToken":"\([^"]*\)".*/\1/p')
 
-# Get Current Session Profile
-curl -X GET http://localhost:3000/api/v1/auth/me -b cookies.txt
+# Get Current User Profile
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/auth/me
 ```
 
 ### 5.2 Customer APIs
 ```bash
 # View Linked Accounts & Balances
-curl -X GET http://localhost:3000/api/v1/customer/accounts -b cookies.txt
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/customer/accounts
 
 # Fast Balance Check
-curl -X GET http://localhost:3000/api/v1/customer/accounts/10001/balance -b cookies.txt
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/customer/accounts/10001/balance
 
 # Transaction History
-curl -X GET http://localhost:3000/api/v1/customer/accounts/10001/transactions -b cookies.txt
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/customer/accounts/10001/transactions
 
 # Statement Generation (with Date Range)
-curl -X GET "http://localhost:3000/api/v1/customer/accounts/10001/statement?fromDate=2026-11-01" -b cookies.txt
+curl -H "Authorization: Bearer $TOKEN" "http://localhost:3000/api/v1/customer/accounts/10001/statement?fromDate=2026-11-01"
 ```
 
 ### 5.3 Fund Transfers & Beneficiaries
 ```bash
 # Add Beneficiary
 curl -X POST http://localhost:3000/api/v1/beneficiaries \
-  -b cookies.txt \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "beneficiaryName": "Priya Sharma",
@@ -608,7 +615,7 @@ curl -X POST http://localhost:3000/api/v1/beneficiaries \
 
 # Submit Fund Transfer (with Idempotency Key)
 curl -X POST http://localhost:3000/api/v1/transfers \
-  -b cookies.txt \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: e1a3f5b0-1234-4567-89ab-cdef01234567" \
   -d '{
@@ -624,7 +631,7 @@ curl -X POST http://localhost:3000/api/v1/transfers \
 ```bash
 # Register New Customer (Staff)
 curl -X POST http://localhost:3000/api/v1/staff/customers \
-  -b cookies.txt \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "username": "rohit.sharma",
@@ -635,11 +642,11 @@ curl -X POST http://localhost:3000/api/v1/staff/customers \
   }'
 
 # List Pending Maker-Checker Approvals
-curl -X GET http://localhost:3000/api/v1/staff/approvals -b cookies.txt
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/staff/approvals
 
 # Authorize Transfer
 curl -X POST http://localhost:3000/api/v1/staff/approvals/1/approve \
-  -b cookies.txt \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"comment":"Verified invoice and customer documentation"}'
 ```
@@ -647,16 +654,16 @@ curl -X POST http://localhost:3000/api/v1/staff/approvals/1/approve \
 ### 5.5 Administration APIs
 ```bash
 # View Transaction Limits
-curl -X GET http://localhost:3000/api/v1/admin/limits -b cookies.txt
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/admin/limits
 
 # Configure Approval Threshold
 curl -X PUT http://localhost:3000/api/v1/admin/limits \
-  -b cookies.txt \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"code":"APPROVAL_THRESHOLD","value":30000}'
 
 # System-Wide Transaction Reports
-curl -X GET http://localhost:3000/api/v1/admin/reports/transactions -b cookies.txt
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/api/v1/admin/reports/transactions
 ```
 
 ---

@@ -22,7 +22,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const lastActivity = useRef(Date.now())
   const lastRefresh = useRef(Date.now())
 
-  // Restore the session (if any). This first call also makes the server issue the CSRF cookie.
+  // Restore the signed-in user from the bearer token kept for this browser tab.
   useEffect(() => {
     authApi.me()
       .then((s) => { setUser(s.user); setStatus('authenticated') })
@@ -39,7 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized)
   }, [])
 
-  // Keep the server session alive only while the person is actually active.
+  // Renew the short-lived token only while the person is actually active.
   useEffect(() => {
     if (status !== 'authenticated') return
     const mark = () => { lastActivity.current = Date.now() }

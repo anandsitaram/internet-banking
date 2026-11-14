@@ -23,7 +23,7 @@ public class JsonSecurityHandlers implements AuthenticationEntryPoint, AccessDen
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response, AuthenticationException ex)
             throws IOException {
-        write(response, 401, "{\"error\":\"UNAUTHENTICATED\",\"message\":\"Authentication required or session expired.\"}");
+        write(response, 401, "{\"error\":\"UNAUTHENTICATED\",\"message\":\"Authentication required or bearer token expired.\"}");
     }
 
     @Override

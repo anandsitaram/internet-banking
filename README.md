@@ -1,6 +1,6 @@
 # OpenBank – Internet Banking Platform (Full 3-Role Blueprint)
 
-Demo-only Internet Banking application built on **React 18 + TypeScript (Material UI)**, a **Spring Boot BFF**, **Apache Fineract** core banking engine, and two separate **PostgreSQL** databases, deployable locally via **Docker Compose** or globally to **Vercel**.
+Demo-only Internet Banking application built on **React 18 + TypeScript (Material UI)**, a **Spring Boot BFF**, **Apache Fineract** core banking engine, and two separate **PostgreSQL** databases, deployable locally via **Docker Compose** with the frontend deployable to **Vercel**.
 
 > **Demo only.** Simulated money, dummy customers, no payment networks. Double-entry core banking engine via Apache Fineract.
 
@@ -11,20 +11,20 @@ Demo-only Internet Banking application built on **React 18 + TypeScript (Materia
 | Area | Feature | Status |
 |---|---|---|
 | **Core Architecture** | Fineract 1.12 + 2 PostgreSQL DBs + Spring Boot BFF + React SPA | ✅ Complete |
-| **Authentication & RBAC** | Session cookies (`IBSESSION`), CSRF protection, Account lockout, Password policy | ✅ Complete |
+| **Authentication & RBAC** | JWT bearer tokens, account lockout, password policy | ✅ Complete |
 | **Role A: Customer** | Live accounts, balances, transaction ledger, statement downloads (CSV/Print) | ✅ Complete |
 | **Role A: Transfers** | Fund transfer form, beneficiary books, idempotency keys, limit validations | ✅ Complete |
 | **Role B: Bank User** | Customer KYC onboarding, open savings accounts, operations dashboard | ✅ Complete |
 | **Role B: Approvals** | Maker-Checker authorization queue for transfers > threshold (anti-self-approval) | ✅ Complete |
 | **Role C: Admin** | User CRUD, roles & permissions matrix, audit logs, system engine status | ✅ Complete |
 | **Role C: Governance** | Transaction limit policies (single max, daily max, approval threshold), report exports | ✅ Complete |
-| **Cloud Deployment** | Vercel SPA configuration (`vercel.json`), instant 1-click interactive demo mode | ✅ Complete |
+| **Cloud Deployment** | Vercel-hosted frontend with a separately hosted Spring backend | ✅ Complete |
 
 ---
 
 ## 🚀 Quick Start (Docker Compose)
 
-1. Copy `.env.example` to `.env` and set secure passwords:
+1. Copy `.env.example` to `.env`, replace every placeholder, and generate a unique JWT secret (`openssl rand -base64 32`):
    ```bash
    cp .env.example .env
    ```
@@ -44,21 +44,22 @@ Demo-only Internet Banking application built on **React 18 + TypeScript (Materia
 | `bank.user1` | `DemoPass@2026` | Bank User (Staff) | Operations & Approvals (`/staff`) |
 | `admin` | `APP_BOOTSTRAP_ADMIN_PASSWORD` | Administrator | Governance & Limits (`/admin`) |
 
-*On `/login`, you can also click the **1-Click Demo Login** buttons to sign in instantly.*
-
 ---
 
 ## ☁️ Deploy to Vercel
 
-The frontend is ready for edge deployment to Vercel with zero configuration required.
+Vercel hosts the **frontend only**. Deploy the Spring Boot backend, PostgreSQL, and Fineract separately, then configure the frontend's `VITE_API_URL` and the backend's `APP_CORS_ALLOWED_ORIGINS`.
 
-### Quick Deploy:
+1. Deploy and configure the backend using [the setup guide](docs/setup-guide.md#7-deploying-frontend-to-vercel). Set a strong `APP_JWT_SECRET` and allow your Vercel site origin in `APP_CORS_ALLOWED_ORIGINS`.
+2. Import this repository into Vercel and set the project **Root Directory** to `frontend`.
+3. Add `VITE_API_URL=https://<your-backend-host>/api/v1` in Vercel's project environment variables, then deploy.
+
+### CLI:
 ```bash
 cd frontend
 npx vercel
 ```
-* Deploy to production: `npx vercel --prod`
-* **Vercel Features**: Full SPA routing, client-side caching, security headers, and automatic **Interactive Demo Sandbox Mode** so anyone can test customer transfers, staff approvals, and admin controls live on Vercel without needing a local backend!
+Deploy to production with `npx vercel --prod`. The frontend cannot run the Java backend or databases as a Vercel static deployment.
 
 ---
 

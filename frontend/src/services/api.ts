@@ -10,10 +10,12 @@ import type {
 /** Check if running on Vercel preview or demo mode requested */
 export const isDemoMode = (): boolean => {
   if (typeof window === 'undefined') return false
+  if (import.meta.env.VITE_API_URL) return false
   const explicit = localStorage.getItem('ib_demo_mode')
   if (explicit !== null) return explicit === 'true'
   // Auto-activate demo mode on Vercel or when no local backend proxy is available
-  return window.location.hostname.includes('vercel.app') || window.location.hostname.includes('github.io')
+  return !import.meta.env.VITE_API_URL
+    && (window.location.hostname.includes('vercel.app') || window.location.hostname.includes('github.io'))
 }
 
 export const setDemoMode = (enabled: boolean): void => {
@@ -21,14 +23,18 @@ export const setDemoMode = (enabled: boolean): void => {
   window.location.reload()
 }
 
-/** Same-origin API client. Auth is an HttpOnly session cookie; CSRF token is echoed from the XSRF-TOKEN cookie. */
+const ACCESS_TOKEN_KEY = 'ib_access_token'
+
+/** Same-origin API client; authenticated requests carry a short-lived JWT bearer token. */
 export const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api/v1',
-  withCredentials: true,
-  xsrfCookieName: 'XSRF-TOKEN',
-  xsrfHeaderName: 'X-XSRF-TOKEN',
-  withXSRFToken: true,
   timeout: 15000,
+})
+
+api.interceptors.request.use((config) => {
+  const token = sessionStorage.getItem(ACCESS_TOKEN_KEY)
+  if (token) config.headers.set('Authorization', `Bearer ${token}`)
+  return config
 })
 
 export const UNAUTHORIZED_EVENT = 'ib:unauthorized'
@@ -37,8 +43,9 @@ api.interceptors.response.use(
   (r) => r,
   (err) => {
     const url: string = err?.config?.url ?? ''
-    if (axios.isAxiosError(err) && err.response?.status === 401 && !/\/auth\/(login|me)$/.test(url)) {
-      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+    if (axios.isAxiosError(err) && err.response?.status === 401) {
+      sessionStorage.removeItem(ACCESS_TOKEN_KEY)
+      if (!/\/auth\/(login|me)$/.test(url)) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
     }
     return Promise.reject(err)
   },
@@ -56,6 +63,11 @@ export function errorMessage(err: unknown, fallback = 'Something went wrong. Ple
 }
 
 // 5.1 Auth APIs
+const saveSession = (session: SessionInfo): SessionInfo => {
+  sessionStorage.setItem(ACCESS_TOKEN_KEY, session.accessToken)
+  return session
+}
+
 export const authApi = {
   me: (): Promise<SessionInfo> => {
     if (isDemoMode()) {
@@ -69,7 +81,7 @@ export const authApi = {
       }
       return Promise.reject(new Error('No demo session'))
     }
-    return api.get<SessionInfo>('/auth/me').then((r) => r.data)
+    return api.get<SessionInfo>('/auth/me').then((r) => saveSession(r.data))
   },
   login: async (username: string, password?: string): Promise<SessionInfo> => {
     if (isDemoMode()) {
@@ -77,18 +89,23 @@ export const authApi = {
       localStorage.setItem('ib_demo_user', JSON.stringify(res.user))
       return res
     }
-    return api.post<SessionInfo>('/auth/login', { username, password }).then((r) => r.data)
+    return api.post<SessionInfo>('/auth/login', { username, password }).then((r) => saveSession(r.data))
   },
   logout: async () => {
     if (isDemoMode()) {
       localStorage.removeItem('ib_demo_user')
+      sessionStorage.removeItem(ACCESS_TOKEN_KEY)
       return Promise.resolve()
     }
-    return api.post('/auth/logout')
+    try {
+      await api.post('/auth/logout')
+    } finally {
+      sessionStorage.removeItem(ACCESS_TOKEN_KEY)
+    }
   },
   refresh: (): Promise<SessionInfo> => {
     if (isDemoMode()) return authApi.me()
-    return api.post<SessionInfo>('/auth/refresh').then((r) => r.data)
+    return api.post<SessionInfo>('/auth/refresh').then((r) => saveSession(r.data))
   },
   forgotPassword: (usernameOrEmail: string) => {
     if (isDemoMode()) return Promise.resolve({ message: 'Password recovery email sent (Demo simulation).' })
