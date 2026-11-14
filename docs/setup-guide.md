@@ -293,6 +293,102 @@ To connect your Vercel frontend to a live cloud backend:
 
 ---
 
+### How to Set Up Passwords for the Database
+
+The project uses **two separate, isolated PostgreSQL database servers** for security and architectural segregation:
+
+| Database Instance | Container Service | Database Name | Default User | Password Environment Variable | Purpose |
+|---|---|---|---|---|---|
+| **Application DB** | `app-db` | `ib_app` | `ib_app` | `POSTGRES_APP_PASSWORD` | Users, sessions, roles, approvals, limits, audit logs |
+| **Core Banking DB**| `fineract-db` | `fineract_tenants` | `fineract` | `POSTGRES_FINERACT_PASSWORD` | Fineract core accounts, double-entry ledger, clients |
+
+---
+
+#### 1. Setting Passwords for Docker Compose (Recommended)
+
+1. Open `.env` (or copy from `.env.example` if not created yet):
+   ```bash
+   cp .env.example .env
+   ```
+2. Set your custom passwords in `.env`:
+   ```env
+   # Application Database Password
+   POSTGRES_APP_PASSWORD=MySecureAppDbPass#2026
+
+   # Apache Fineract Database Password
+   POSTGRES_FINERACT_PASSWORD=MySecureFineractPass#2026
+
+   # First Admin Account Password (min 12 characters, uppercase, lowercase, digit, symbol)
+   APP_BOOTSTRAP_ADMIN_PASSWORD=CHANGE-ME-Admin#2026
+
+   # Pre-seeded Demo Users (customer.alex & bank.user1)
+   APP_SEED_DEMO_USERS=true
+   DEMO_USER_PASSWORD=DemoPass@2026
+   ```
+3. Start the containers:
+   ```bash
+   docker compose up --build -d
+   ```
+
+> [!IMPORTANT]
+> **Docker Volume Password Persistence**: PostgreSQL initializes the password **only on first volume creation**. If you previously ran `docker compose up` and later changed `POSTGRES_APP_PASSWORD` in `.env`, PostgreSQL keeps the old password stored in the existing Docker volume.
+> 
+> To apply new database passwords, use one of the two options:
+> * **Option A (Reset volumes for a clean slate)**:
+>   ```bash
+>   docker compose down -v
+>   docker compose up --build -d
+>   ```
+> * **Option B (Update password without deleting data)**:
+>   Connect to the running container and execute SQL `ALTER USER`:
+>   ```bash
+>   docker compose exec app-db psql -U ib_app -d ib_app -c "ALTER USER ib_app WITH PASSWORD 'MySecureAppDbPass#2026';"
+>   docker compose exec fineract-db psql -U fineract -d fineract_tenants -c "ALTER USER fineract WITH PASSWORD 'MySecureFineractPass#2026';"
+>   docker compose restart backend fineract
+>   ```
+
+---
+
+#### 2. Setting Passwords for Local Standalone Development (Outside Docker Compose)
+
+If you are running PostgreSQL on your local host (native install or standalone Docker container):
+
+##### A. When running PostgreSQL container via Docker CLI:
+```bash
+docker run --name ib-app-db \
+  -e POSTGRES_DB=ib_app \
+  -e POSTGRES_USER=ib_app \
+  -e POSTGRES_PASSWORD=MyCustomLocalPassword123! \
+  -p 5433:5432 \
+  -d postgres:16-alpine
+```
+
+##### B. When using an existing local PostgreSQL installation:
+Log in to `psql` as postgres superuser and create the user and database with password:
+```sql
+CREATE USER ib_app WITH PASSWORD 'MyCustomLocalPassword123!';
+CREATE DATABASE ib_app OWNER ib_app;
+GRANT ALL PRIVILEGES ON DATABASE ib_app TO ib_app;
+```
+
+##### C. Provide password to Spring Boot BFF:
+* **PowerShell**:
+  ```powershell
+  $env:APP_DB_PASSWORD="MyCustomLocalPassword123!"
+  ```
+* **Bash**:
+  ```bash
+  export APP_DB_PASSWORD="MyCustomLocalPassword123!"
+  ```
+* **In `application.yml`** (fallback default):
+  ```yaml
+  spring:
+    datasource:
+      password: ${APP_DB_PASSWORD:MyCustomLocalPassword123!}
+  ```
+
+---
+
 ### Database Schema & Automatic Flyway Migrations
 
 When the backend boots, Flyway executes migrations in `src/main/resources/db/migration/`:
