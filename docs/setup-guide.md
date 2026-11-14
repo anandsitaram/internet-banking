@@ -389,6 +389,74 @@ GRANT ALL PRIVILEGES ON DATABASE ib_app TO ib_app;
 
 ---
 
+### How to Create the Database (Automated vs Manual)
+
+#### Method 1: Automatic Creation via Docker Compose (Recommended)
+You **do not need to write any manual SQL to create the database or tables** when using Docker Compose:
+1. When you run `docker compose up --build -d`:
+   * The `app-db` PostgreSQL container boots and automatically creates the database `ib_app` with user `ib_app` (configured via `POSTGRES_DB` and `POSTGRES_USER` in `compose.yaml`).
+   * The `fineract-db` container boots, creates `fineract_tenants`, and automatically executes the mounted init script (`database/fineract/001_create_default_tenant.sh`) to create `fineract_default`.
+2. When the Spring Boot BFF container starts up:
+   * **Flyway** automatically runs migrations `V1`, `V2`, and `V3` to create all tables (`ib_users`, `ib_roles`, `ib_permissions`, `ib_beneficiaries`, `ib_transfer_requests`, `ib_approvals`, `ib_system_limits`, etc.).
+   * **DemoDataSeeder** automatically inserts the bootstrap admin, `customer.alex`, `bank.user1`, linked demo accounts, and beneficiaries.
+
+---
+
+#### Method 2: Manual Database Creation (For Local Standalone Postgres / pgAdmin / psql)
+
+If you have a local PostgreSQL server running natively on your machine or on cloud (AWS RDS / Supabase / Neon):
+
+##### Step 1: Connect to PostgreSQL as Superuser
+Using the terminal:
+```bash
+psql -U postgres -h localhost
+```
+Or open **pgAdmin** / **DBeaver** and connect to your local PostgreSQL server.
+
+##### Step 2: Create Application User and Database
+Run the following SQL commands:
+```sql
+-- 1. Create the application user with your chosen password
+CREATE USER ib_app WITH PASSWORD 'change_me_app';
+
+-- 2. Create the application database owned by ib_app
+CREATE DATABASE ib_app OWNER ib_app;
+
+-- 3. Grant schema privileges
+GRANT ALL PRIVILEGES ON DATABASE ib_app TO ib_app;
+\c ib_app
+GRANT ALL ON SCHEMA public TO ib_app;
+```
+
+##### Step 3: (Optional) Create Fineract Core Databases
+If you are also running Apache Fineract on your local machine:
+```sql
+-- 1. Create the fineract user
+CREATE USER fineract WITH PASSWORD 'change_me_fineract';
+
+-- 2. Create the tenant metadata database and the default tenant database
+CREATE DATABASE fineract_tenants OWNER fineract;
+CREATE DATABASE fineract_default OWNER fineract;
+
+-- 3. Grant privileges
+GRANT ALL PRIVILEGES ON DATABASE fineract_tenants TO fineract;
+GRANT ALL PRIVILEGES ON DATABASE fineract_default TO fineract;
+```
+
+##### Step 4: Let Flyway Create the Tables Automatically
+Once the empty database `ib_app` is created, **do not manually create the tables**.
+Simply run the Spring Boot backend (`mvn spring-boot:run` or `java -jar target/internet-banking-bff-0.2.0.jar`).
+Flyway will automatically detect the empty database and create all required tables, constraints, foreign keys, indexes, and initial data!
+
+*(Optional: If you want to execute the migration SQL manually without Spring Boot)*:
+```bash
+psql -U ib_app -d ib_app -f backend/src/main/resources/db/migration/V1__application_schema.sql
+psql -U ib_app -d ib_app -f backend/src/main/resources/db/migration/V2__seed_roles_permissions.sql
+psql -U ib_app -d ib_app -f backend/src/main/resources/db/migration/V3__limits_and_seed_data.sql
+```
+
+---
+
 ### Database Schema & Automatic Flyway Migrations
 
 When the backend boots, Flyway executes migrations in `src/main/resources/db/migration/`:
