@@ -1,0 +1,113 @@
+# Demo-only stack. Only the web portal is published, and only on localhost.
+# Fineract, both databases and (by default) the BFF stay on the internal Docker network.
+services:
+  app-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_APP_DB:-ib_app}
+      POSTGRES_USER: ${POSTGRES_APP_USER:-ib_app}
+      POSTGRES_PASSWORD: ${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD in .env}
+    volumes:
+      - app_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_APP_USER:-ib_app} -d ${POSTGRES_APP_DB:-ib_app}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [ib-net]
+
+  fineract-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_FINERACT_DB:-fineract_tenants}
+      POSTGRES_USER: ${POSTGRES_FINERACT_USER:-fineract}
+      POSTGRES_PASSWORD: ${POSTGRES_FINERACT_PASSWORD:?Set POSTGRES_FINERACT_PASSWORD in .env}
+    volumes:
+      - fineract_pgdata:/var/lib/postgresql/data
+      - ./database/fineract/001_create_default_tenant.sh:/docker-entrypoint-initdb.d/001_create_default_tenant.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_FINERACT_USER:-fineract} -d ${POSTGRES_FINERACT_DB:-fineract_tenants}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [ib-net]
+
+  fineract:
+    # Pin a release you have tested. Confirm the tag exists: docker pull apache/fineract:<tag>
+    image: apache/fineract:${FINERACT_IMAGE_TAG:-1.12.1}
+    depends_on:
+      fineract-db:
+        condition: service_healthy
+    environment:
+      FINERACT_NODE_ID: 1
+      # NOTE: the variable is ..._DRIVER_SOURCE_CLASS_NAME. The old ..._DRIVER_CLASS_NAME is ignored.
+      FINERACT_HIKARI_DRIVER_SOURCE_CLASS_NAME: org.postgresql.Driver
+      FINERACT_HIKARI_JDBC_URL: jdbc:postgresql://fineract-db:5432/${POSTGRES_FINERACT_DB:-fineract_tenants}
+      FINERACT_HIKARI_USERNAME: ${POSTGRES_FINERACT_USER:-fineract}
+      FINERACT_HIKARI_PASSWORD: ${POSTGRES_FINERACT_PASSWORD:?Set POSTGRES_FINERACT_PASSWORD in .env}
+      FINERACT_DEFAULT_TENANTDB_HOSTNAME: fineract-db
+      FINERACT_DEFAULT_TENANTDB_PORT: 5432
+      FINERACT_DEFAULT_TENANTDB_UID: ${POSTGRES_FINERACT_USER:-fineract}
+      FINERACT_DEFAULT_TENANTDB_PWD: ${POSTGRES_FINERACT_PASSWORD:?Set POSTGRES_FINERACT_PASSWORD in .env}
+      FINERACT_DEFAULT_TENANTDB_CONN_PARAMS: ""
+      FINERACT_DEFAULT_TENANTDB_TIMEZONE: Asia/Kolkata
+      FINERACT_DEFAULT_TENANTDB_IDENTIFIER: default
+      FINERACT_DEFAULT_TENANTDB_NAME: fineract_default
+      FINERACT_DEFAULT_TENANTDB_DESCRIPTION: Default Demo Tenant
+      FINERACT_SERVER_SSL_ENABLED: "false"
+      JAVA_TOOL_OPTIONS: "-Xmx1G"
+    # No "ports:" on purpose - Fineract is reachable only from the BFF.
+    expose:
+      - "8443"
+    networks: [ib-net]
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      APP_DB_URL: jdbc:postgresql://app-db:5432/${POSTGRES_APP_DB:-ib_app}
+      APP_DB_USER: ${POSTGRES_APP_USER:-ib_app}
+      APP_DB_PASSWORD: ${POSTGRES_APP_PASSWORD:?Set POSTGRES_APP_PASSWORD in .env}
+      FINERACT_BASE_URL: ${FINERACT_BASE_URL:-http://fineract:8443}
+      FINERACT_TENANT_ID: ${FINERACT_TENANT_ID:-default}
+      FINERACT_USERNAME: ${FINERACT_USERNAME:-mifos}
+      FINERACT_PASSWORD: ${FINERACT_PASSWORD:?Set FINERACT_PASSWORD in .env}
+      APP_COOKIE_SECURE: ${APP_COOKIE_SECURE:-false}
+      APP_BOOTSTRAP_ADMIN_USERNAME: ${APP_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      APP_BOOTSTRAP_ADMIN_PASSWORD: ${APP_BOOTSTRAP_ADMIN_PASSWORD:?Set APP_BOOTSTRAP_ADMIN_PASSWORD in .env}
+      APP_SEED_DEMO_USERS: ${APP_SEED_DEMO_USERS:-true}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-}
+    depends_on:
+      app-db:
+        condition: service_healthy
+      fineract:
+        condition: service_started
+    # Bound to localhost so Postman/Swagger can reach the BFF during development.
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks: [ib-net]
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:80"
+    networks: [ib-net]
+    restart: unless-stopped
+
+networks:
+  ib-net:
+
+volumes:
+  app_pgdata:
+  fineract_pgdata:
